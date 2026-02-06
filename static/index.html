@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>双人答题对战</title>
+  <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: "Microsoft YaHei", sans-serif;
+      max-width: 480px;
+      margin: 0 auto;
+      padding: 16px;
+      background: #1a1a2e;
+      color: #eee;
+      min-height: 100vh;
+    }
+    h1 { font-size: 1.4rem; text-align: center; margin-bottom: 24px; color: #e94560; }
+    .screen { display: none; }
+    .screen.active { display: block; }
+    .lobby .btn-wrap { display: flex; gap: 12px; justify-content: center; margin-top: 24px; }
+    .lobby p { text-align: center; color: #aaa; }
+    button {
+      padding: 14px 28px;
+      font-size: 1rem;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      background: #e94560;
+      color: #fff;
+      font-weight: bold;
+    }
+    button:hover { background: #ff6b6b; }
+    button:disabled { background: #555; cursor: not-allowed; }
+    button.secondary { background: #16213e; }
+    button.secondary:hover { background: #0f3460; }
+    .board {
+      background: #16213e;
+      border-radius: 12px;
+      padding: 24px;
+      margin: 16px 0;
+      text-align: center;
+    }
+    .scores {
+      display: flex;
+      justify-content: space-around;
+      margin-bottom: 20px;
+      font-size: 1.1rem;
+    }
+    .scores span { color: #e94560; font-weight: bold; }
+    .question {
+      font-size: 1.8rem;
+      margin: 20px 0;
+      letter-spacing: 2px;
+    }
+    .timer {
+      font-size: 1.2rem;
+      color: #f0a500;
+      margin-bottom: 16px;
+    }
+    .timer.warn { color: #e94560; animation: pulse 1s infinite; }
+    @keyframes pulse { 50% { opacity: 0.7; } }
+    input[type="number"] {
+      width: 100%;
+      padding: 14px;
+      font-size: 1.2rem;
+      border: 2px solid #0f3460;
+      border-radius: 8px;
+      background: #1a1a2e;
+      color: #eee;
+      margin: 8px 0;
+    }
+    input:focus { outline: none; border-color: #e94560; }
+    .submit-wrap { margin-top: 16px; }
+    .result-msg {
+      margin-top: 12px;
+      padding: 12px;
+      border-radius: 8px;
+      text-align: center;
+    }
+    .result-msg.correct { background: #0d7377; color: #fff; }
+    .result-msg.wrong { background: #5c2a2a; color: #ffb3b3; }
+    .round-info { color: #888; font-size: 0.9rem; margin-bottom: 8px; }
+    .game-over {
+      text-align: center;
+      padding: 24px;
+    }
+    .game-over h2 { color: #e94560; margin-bottom: 16px; }
+    .game-over .scores { justify-content: center; gap: 32px; }
+  </style>
+</head>
+<body>
+  <h1>双人答题对战</h1>
+
+  <div id="lobby" class="screen active">
+    <p>选择你的身份加入游戏（需两人各选一方）</p>
+    <div class="btn-wrap">
+      <button id="join1">玩家 1</button>
+      <button id="join2">玩家 2</button>
+    </div>
+    <p id="lobby-status" style="margin-top:16px;color:#888;"></p>
+  </div>
+
+  <div id="game" class="screen">
+    <div class="round-info">第 <span id="round-n">-</span> / <span id="total-n">10</span> 题</div>
+    <div class="scores">
+      <span>玩家1: <strong id="score1">0</strong></span>
+      <span>玩家2: <strong id="score2">0</strong></span>
+    </div>
+    <div class="board">
+      <div id="question-text" class="question">等待题目…</div>
+      <div id="timer" class="timer"></div>
+      <input type="number" id="answer-input" placeholder="输入答案" disabled />
+      <div class="submit-wrap">
+        <button id="submit-answer" disabled>提交答案</button>
+      </div>
+      <div id="result-msg" class="result-msg" style="display:none;"></div>
+    </div>
+  </div>
+
+  <div id="gameover" class="screen">
+    <div class="game-over">
+      <h2 id="winner-text">游戏结束</h2>
+      <div class="scores">
+        <span>玩家1: <strong id="final1">0</strong></span>
+        <span>玩家2: <strong id="final2">0</strong></span>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const socket = io();
+    let myPlayer = 0;
+    let gameCountdownTimer = null;
+
+    function show(id) {
+      document.querySelectorAll(".screen").forEach(el => el.classList.remove("active"));
+      document.getElementById(id).classList.add("active");
+    }
+
+    function stopCountdown() {
+      if (gameCountdownTimer) clearInterval(gameCountdownTimer);
+      gameCountdownTimer = null;
+    }
+
+    document.getElementById("join1").onclick = () => {
+      myPlayer = 1;
+      socket.emit("join", { player: 1 });
+      document.getElementById("lobby-status").textContent = "已选玩家1，等待玩家2…";
+      document.getElementById("join1").disabled = true;
+      document.getElementById("join2").disabled = true;
+    };
+    document.getElementById("join2").onclick = () => {
+      myPlayer = 2;
+      socket.emit("join", { player: 2 });
+      document.getElementById("lobby-status").textContent = "已选玩家2，等待玩家1…";
+      document.getElementById("join1").disabled = true;
+      document.getElementById("join2").disabled = true;
+    };
+
+    socket.on("joined", (data) => {
+      document.getElementById("lobby-status").textContent = "已加入，等待对方…";
+    });
+
+    socket.on("game_start", (data) => {
+      show("game");
+      document.getElementById("total-n").textContent = data.max_rounds || 10;
+      document.getElementById("score1").textContent = "0";
+      document.getElementById("score2").textContent = "0";
+      document.getElementById("answer-input").value = "";
+      document.getElementById("answer-input").disabled = false;
+      document.getElementById("submit-answer").disabled = false;
+      document.getElementById("result-msg").style.display = "none";
+      // 启动整局 1 分钟倒计时
+      let left = data.time_limit || 60;
+      const el = document.getElementById("timer");
+      el.textContent = "剩余 " + left + " 秒";
+      el.classList.remove("warn");
+      stopCountdown();
+      gameCountdownTimer = setInterval(() => {
+        left--;
+        if (left <= 0) {
+          el.textContent = "时间到";
+          stopCountdown();
+        } else {
+          el.textContent = "剩余 " + left + " 秒";
+          if (left <= 10) el.classList.add("warn");
+        }
+      }, 1000);
+    });
+
+    socket.on("question", (data) => {
+      document.getElementById("round-n").textContent = data.round;
+      document.getElementById("question-text").textContent = data.question;
+      document.getElementById("score1").textContent = data.scores ? data.scores[0] : document.getElementById("score1").textContent;
+      document.getElementById("score2").textContent = data.scores ? data.scores[1] : document.getElementById("score2").textContent;
+      document.getElementById("answer-input").value = "";
+      document.getElementById("answer-input").disabled = false;
+      document.getElementById("submit-answer").disabled = false;
+      document.getElementById("result-msg").style.display = "none";
+    });
+
+    socket.on("round_result", (data) => {
+      document.getElementById("score1").textContent = data.scores[0];
+      document.getElementById("score2").textContent = data.scores[1];
+      // 只有提交本次答案的玩家才显示结果和锁定输入
+      if (data.player === myPlayer) {
+        document.getElementById("answer-input").disabled = true;
+        document.getElementById("submit-answer").disabled = true;
+
+        const msg = document.getElementById("result-msg");
+        msg.style.display = "block";
+        const correct = data.correct[myPlayer - 1];
+        msg.textContent = correct ? "回答正确！+1 分" : "回答错误。正确答案: " + data.correct_answer;
+        msg.className = "result-msg " + (correct ? "correct" : "wrong");
+      }
+    });
+
+    socket.on("game_over", (data) => {
+      stopCountdown();
+      show("gameover");
+      document.getElementById("final1").textContent = data.scores[0];
+      document.getElementById("final2").textContent = data.scores[1];
+      let text = "游戏结束";
+      if (data.winner === 1) text = "玩家1 获胜！";
+      else if (data.winner === 2) text = "玩家2 获胜！";
+      else text = "平局！";
+      document.getElementById("winner-text").textContent = text;
+    });
+
+    document.getElementById("submit-answer").onclick = () => {
+      const v = document.getElementById("answer-input").value.trim();
+      if (v === "") return;
+      socket.emit("answer", { value: v });
+      document.getElementById("answer-input").disabled = true;
+      document.getElementById("submit-answer").disabled = true;
+    };
+    document.getElementById("answer-input").onkeydown = (e) => {
+      if (e.key === "Enter") document.getElementById("submit-answer").click();
+    };
+  </script>
+</body>
+</html>

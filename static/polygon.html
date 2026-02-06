@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>15 边形连线对战</title>
+  <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: "Microsoft YaHei", sans-serif;
+      margin: 0;
+      padding: 16px;
+      background: #111827;
+      color: #e5e7eb;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-height: 100vh;
+    }
+    h1 { font-size: 1.4rem; margin: 8px 0 12px; color: #f97316; }
+    .screen { display: none; width: 100%; max-width: 960px; }
+    .screen.active { display: block; }
+    .lobby {
+      text-align: center;
+      margin-top: 40px;
+    }
+    button {
+      padding: 10px 20px;
+      margin: 4px;
+      border-radius: 999px;
+      border: none;
+      cursor: pointer;
+      font-size: 0.95rem;
+      font-weight: 600;
+      background: #2563eb;
+      color: white;
+    }
+    button:hover { background: #1d4ed8; }
+    button:disabled { background: #4b5563; cursor: not-allowed; }
+    canvas {
+      background: #020617;
+      border-radius: 12px;
+      box-shadow: 0 0 0 1px #1f2937;
+      margin-top: 12px;
+      touch-action: none;
+    }
+    .top-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: 8px;
+      font-size: 0.95rem;
+    }
+    .score {
+      display: flex;
+      gap: 12px;
+    }
+    .score span strong { color: #facc15; }
+    .timer { color: #f97316; font-weight: 600; }
+    .timer.warn { color: #ef4444; }
+    .controls {
+      margin-top: 8px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.9rem;
+    }
+    .msg {
+      margin-top: 8px;
+      padding: 8px 10px;
+      border-radius: 8px;
+      font-size: 0.9rem;
+    }
+    .msg.info { background: #0f172a; color: #e5e7eb; }
+    .msg.ok { background: #064e3b; color: #bbf7d0; }
+    .msg.err { background: #7f1d1d; color: #fecaca; }
+    .gameover {
+      text-align: center;
+      margin-top: 40px;
+    }
+  </style>
+</head>
+<body>
+  <h1>15 边形连线对战</h1>
+
+  <div id="lobby" class="screen active lobby">
+    <p>设置昵称、选择难度并选择身份加入游戏（双人或人机均可）</p>
+    <p style="margin:8px 0;">
+      <label for="nickname-input">昵称：</label>
+      <input type="text" id="nickname-input" placeholder="输入昵称（可选）" maxlength="20" style="padding:6px 10px;border-radius:6px;border:1px solid #374151;background:#1f2937;color:#e5e7eb;width:160px;" />
+    </p>
+    <p style="margin:8px 0;">
+      <label for="difficulty-select">难度：</label>
+      <select id="difficulty-select" style="padding:6px 10px;border-radius:6px;border:1px solid #374151;background:#1f2937;color:#e5e7eb;">
+        <option value="easy">简单</option>
+        <option value="normal" selected>普通</option>
+        <option value="hard">困难</option>
+      </select>
+      <span style="font-size:0.8rem;color:#9ca3af;margin-left:6px;">（在人机对战中生效）</span>
+    </p>
+    <p style="font-size:0.85rem;color:#9ca3af;">
+      规则：5 局 3 胜。仅可在 15 个空心圆之间连线，形成不自交的闭合 15 边形；<br />
+      内部白点 +1，蓝点 +2，绿点 +5，红点 -4。每局 5 分钟，每局结束双方准备后开始下一局。
+    </p>
+    <div>
+      <button id="join1">玩家 1</button>
+      <button id="join2">玩家 2</button>
+    </div>
+    <p id="lobby-status" style="margin-top:12px;color:#9ca3af;"></p>
+  </div>
+
+  <div id="game" class="screen">
+    <div class="top-bar">
+      <div class="score">
+        <span>第 <strong id="round-n">1</strong> 局</span>
+        <span><span id="name-p1">玩家1</span> <strong id="wins-p1">0</strong> - <strong id="wins-p2">0</strong> <span id="name-p2">玩家2</span></span>
+      </div>
+      <div class="timer" id="timer">剩余 300 秒</div>
+    </div>
+    <canvas id="board" width="800" height="800"></canvas>
+    <div class="controls">
+      <span id="hint">点击两个圆环连/断一条边；相交的线会在本地标红。</span>
+      <button id="submit-btn">提交当前 15 边形</button>
+    </div>
+    <div id="msg" class="msg info" style="display:none;"></div>
+  </div>
+
+  <div id="roundover" class="screen">
+    <div class="gameover">
+      <h2 id="round-result-text">本局结束</h2>
+      <p style="font-size:0.95rem;margin:4px 0;" id="round-diff""></p>
+      <p style="font-size:1rem;margin:4px 0 8px;">胜场 <strong id="row-wins1">0</strong> - <strong id="row-wins2">0</strong></p>
+      <div style="display:flex;gap:24px;justify-content:center;align-items:flex-start;flex-wrap:wrap;margin-top:16px;">
+        <div>
+          <h3 id="round-title1" style="margin:4px 0 8px;font-size:0.95rem;">玩家 1 题板</h3>
+          <canvas id="roundCanvas1" width="360" height="360" style="background:#020617;border-radius:8px;box-shadow:0 0 0 1px #1f2937;"></canvas>
+          <p style="font-size:0.85rem;color:#9ca3af;margin-top:6px;" id="round-stats1"></p>
+        </div>
+        <div>
+          <h3 id="round-title2" style="margin:4px 0 8px;font-size:0.95rem;">玩家 2 题板</h3>
+          <canvas id="roundCanvas2" width="360" height="360" style="background:#020617;border-radius:8px;box-shadow:0 0 0 1px #1f2937;"></canvas>
+          <p style="font-size:0.85rem;color:#9ca3af;margin-top:6px;" id="round-stats2"></p>
+        </div>
+      </div>
+      <button id="ready-btn" style="margin-top:20px;">准备下一轮</button>
+    </div>
+  </div>
+
+  <div id="gameover" class="screen">
+    <div class="gameover">
+      <h2 id="winner-text">游戏结束</h2>
+      <p style="font-size:0.95rem;margin:4px 0;" id="final-diff"></p>
+      <p style="font-size:1rem;margin:4px 0 8px;">最终胜场 <strong id="final-wins1">0</strong> - <strong id="final-wins2">0</strong></p>
+      <div style="display:flex;gap:24px;justify-content:center;align-items:flex-start;flex-wrap:wrap;margin-top:16px;">
+        <div>
+          <h3 id="final-title1" style="margin:4px 0 8px;font-size:0.95rem;">玩家 1 题板</h3>
+          <canvas id="finalCanvas1" width="360" height="360" style="background:#020617;border-radius:8px;box-shadow:0 0 0 1px #1f2937;"></canvas>
+          <p style="font-size:0.85rem;color:#9ca3af;margin-top:6px;" id="stats1"></p>
+        </div>
+        <div>
+          <h3 id="final-title2" style="margin:4px 0 8px;font-size:0.95rem;">玩家 2 题板</h3>
+          <canvas id="finalCanvas2" width="360" height="360" style="background:#020617;border-radius:8px;box-shadow:0 0 0 1px #1f2937;"></canvas>
+          <p style="font-size:0.85rem;color:#9ca3af;margin-top:6px;" id="stats2"></p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const socket = io();
+
+    let myPlayer = 0;
+    let timeLeft = 120;
+    let timerId = null;
+
+    let dots = [];
+    let rings = [];
+    let edges = []; // [[i,j], ...] 对应 rings 索引
+    let selectedRing = null;
+
+    const canvas = document.getElementById("board");
+    const ctx = canvas.getContext("2d");
+
+    function showScreen(id) {
+      document.querySelectorAll(".screen").forEach(s => s.classList.remove("active"));
+      document.getElementById(id).classList.add("active");
+    }
+
+    function startTimer(limit) {
+      timeLeft = limit;
+      const tEl = document.getElementById("timer");
+      if (timerId) clearInterval(timerId);
+      tEl.classList.remove("warn");
+      tEl.textContent = "剩余 " + timeLeft + " 秒";
+      timerId = setInterval(() => {
+        timeLeft--;
+        if (timeLeft <= 0) {
+          timeLeft = 0;
+          clearInterval(timerId);
+          timerId = null;
+        }
+        tEl.textContent = "剩余 " + timeLeft + " 秒";
+        if (timeLeft <= 15) tEl.classList.add("warn");
+      }, 1000);
+    }
+
+    function dist2(a, b) {
+      const dx = a.x - b.x;
+      const dy = a.y - b.y;
+      return dx * dx + dy * dy;
+    }
+
+    function drawBoard() {
+      if (!ctx) return;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // 画彩色点
+      for (const d of dots) {
+        ctx.beginPath();
+        ctx.arc(d.x, d.y, 4, 0, Math.PI * 2);
+        let c = "#000000";
+        if (d.color === "white") c = "#f9fafb";
+        else if (d.color === "blue") c = "#3b82f6";
+        else if (d.color === "green") c = "#10b981";
+        else if (d.color === "red") c = "#ef4444";
+        ctx.fillStyle = c;
+        ctx.fill();
+      }
+
+      // 先计算哪些边本地发生相交，用于标红
+      const intersecting = new Set();
+      function segIntersect(p1, p2, p3, p4) {
+        function cross(a, b, c) {
+          return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+        }
+        const c1 = cross(p1, p2, p3);
+        const c2 = cross(p1, p2, p4);
+        const c3 = cross(p3, p4, p1);
+        const c4 = cross(p3, p4, p2);
+        return c1 * c2 < 0 && c3 * c4 < 0;
+      }
+      const segs = edges.map(e => {
+        const a = rings[e[0]], b = rings[e[1]];
+        return { a, b };
+      });
+      for (let i = 0; i < segs.length; i++) {
+        for (let j = i + 1; j < segs.length; j++) {
+          const e1 = edges[i], e2 = edges[j];
+          // 共享端点不算
+          if (e1[0] === e2[0] || e1[0] === e2[1] || e1[1] === e2[0] || e1[1] === e2[1]) continue;
+          if (segIntersect(segs[i].a, segs[i].b, segs[j].a, segs[j].b)) {
+            intersecting.add(i);
+            intersecting.add(j);
+          }
+        }
+      }
+
+      // 画线
+      ctx.lineWidth = 2;
+      for (let i = 0; i < edges.length; i++) {
+        const [ia, ib] = edges[i];
+        const a = rings[ia], b = rings[ib];
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+        ctx.strokeStyle = intersecting.has(i) ? "#ef4444" : "#9ca3af";
+        ctx.stroke();
+      }
+
+      // 画圆环
+      for (let i = 0; i < rings.length; i++) {
+        const r = rings[i];
+        ctx.beginPath();
+        ctx.arc(r.x, r.y, 8, 0, Math.PI * 2);
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = "#e5e7eb";
+        ctx.stroke();
+        if (selectedRing === i) {
+          ctx.fillStyle = "rgba(248, 250, 252, 0.25)";
+          ctx.fill();
+        }
+      }
+    }
+
+    function toggleEdge(i, j) {
+      if (i === j) return;
+      const a = Math.min(i, j);
+      const b = Math.max(i, j);
+      const idx = edges.findIndex(e => e[0] === a && e[1] === b);
+      if (idx >= 0) {
+        edges.splice(idx, 1);
+      } else {
+        edges.push([a, b]);
+      }
+      drawBoard();
+    }
+
+    function pickRingAt(x, y) {
+      const p = { x, y };
+      let best = -1;
+      let bestD = 12 * 12; // 选取半径 12 以内的最近圆
+      for (let i = 0; i < rings.length; i++) {
+        const d2 = dist2(p, rings[i]);
+        if (d2 < bestD) {
+          bestD = d2;
+          best = i;
+        }
+      }
+      return best;
+    }
+
+    canvas.addEventListener("click", (e) => {
+      if (!rings.length) return;
+      const rect = canvas.getBoundingClientRect();
+      const x = (e.clientX - rect.left) * (canvas.width / rect.width);
+      const y = (e.clientY - rect.top) * (canvas.height / rect.height);
+      const idx = pickRingAt(x, y);
+      if (idx === -1) return;
+
+      if (selectedRing === null) {
+        selectedRing = idx;
+      } else {
+        toggleEdge(selectedRing, idx);
+        selectedRing = null;
+      }
+      drawBoard();
+    });
+
+    // --- socket 逻辑 ---
+    document.getElementById("join1").onclick = () => {
+      myPlayer = 1;
+      const nick = document.getElementById("nickname-input").value.trim() || "玩家1";
+      const diff = document.getElementById("difficulty-select").value || "normal";
+      socket.emit("join", { player: 1, nickname: nick, difficulty: diff });
+      document.getElementById("join1").disabled = true;
+      document.getElementById("join2").disabled = true;
+      document.getElementById("nickname-input").disabled = true;
+      document.getElementById("lobby-status").textContent = "已选玩家1，等待玩家2…";
+    };
+    document.getElementById("join2").onclick = () => {
+      myPlayer = 2;
+      const nick = document.getElementById("nickname-input").value.trim() || "玩家2";
+      const diff = document.getElementById("difficulty-select").value || "normal";
+      socket.emit("join", { player: 2, nickname: nick, difficulty: diff });
+      document.getElementById("join1").disabled = true;
+      document.getElementById("join2").disabled = true;
+      document.getElementById("nickname-input").disabled = true;
+      document.getElementById("lobby-status").textContent = "已选玩家2，等待玩家1…";
+    };
+
+    socket.on("joined", () => {
+      document.getElementById("lobby-status").textContent = "已加入，等待对方…";
+    });
+
+    socket.on("round_start", (data) => {
+      showScreen("game");
+      dots = data.dots || [];
+      rings = data.rings || [];
+      edges = [];
+      selectedRing = null;
+      canvas.style.pointerEvents = "";
+      document.getElementById("round-n").textContent = data.round_index || 1;
+      document.getElementById("wins-p1").textContent = data.wins_p1 ?? 0;
+      document.getElementById("wins-p2").textContent = data.wins_p2 ?? 0;
+      document.getElementById("name-p1").textContent = data.nickname_p1 || "玩家1";
+      document.getElementById("name-p2").textContent = data.nickname_p2 || "玩家2";
+      const msg = document.getElementById("msg");
+      msg.style.display = "block";
+      msg.className = "msg info";
+      msg.textContent = "第" + (data.round_index || 1) + " 局：请在 5 分钟内连成一个不自交的 15 边形，然后点击“提交当前 15 边形”。";
+      startTimer(data.time_limit || 300);
+      drawBoard();
+    });
+
+    socket.on("submit_result", (data) => {
+      const msg = document.getElementById("msg");
+      msg.style.display = "block";
+      if (!data.ok) {
+        msg.className = "msg err";
+        msg.textContent = data.message || "提交的多边形不合法，请调整后重试。";
+      } else {
+        msg.className = "msg ok";
+        msg.textContent = data.message || "已提交，等待对手或时间结束。";
+        // 覆盖当前答案：清空连线，只保留点和圆环，禁止继续操作
+        edges = [];
+        selectedRing = null;
+        canvas.style.pointerEvents = "none";
+        drawBoard();
+      }
+    });
+
+    socket.on("round_finished", () => {
+      const msg = document.getElementById("msg");
+      msg.style.display = "block";
+      msg.className = "msg info";
+      msg.textContent = "双方均已提交，本局作答结束，3 秒后公布题板与得分…";
+    });
+
+    function drawResultCanvases(canvasId1, canvasId2, p1, p2) {
+      const sx = 360 / canvas.width;
+      const sy = 360 / canvas.height;
+      function drawOne(canvasId, playerResult) {
+        const cvs = document.getElementById(canvasId);
+        const c = cvs.getContext("2d");
+        c.clearRect(0, 0, cvs.width, cvs.height);
+        for (const d of dots) {
+          c.beginPath();
+          c.arc(d.x * sx, d.y * sy, 3, 0, Math.PI * 2);
+          let col = "#000000";
+          if (d.color === "white") col = "#f9fafb";
+          else if (d.color === "blue") col = "#3b82f6";
+          else if (d.color === "green") col = "#10b981";
+          else if (d.color === "red") col = "#ef4444";
+          c.fillStyle = col;
+          c.fill();
+        }
+        c.lineWidth = 2;
+        c.strokeStyle = "#9ca3af";
+        (playerResult.edges || []).forEach(([ia, ib]) => {
+          const a = rings[ia], b = rings[ib];
+          c.beginPath();
+          c.moveTo(a.x * sx, a.y * sy);
+          c.lineTo(b.x * sx, b.y * sy);
+          c.stroke();
+        });
+        for (let i = 0; i < rings.length; i++) {
+          const r = rings[i];
+          c.beginPath();
+          c.arc(r.x * sx, r.y * sy, 6, 0, Math.PI * 2);
+          c.lineWidth = 1.5;
+          c.strokeStyle = "#e5e7eb";
+          c.stroke();
+        }
+      }
+      drawOne(canvasId1, p1);
+      drawOne(canvasId2, p2);
+    }
+
+    socket.on("round_over", (data) => {
+      if (timerId) clearInterval(timerId);
+      const n1 = data.nickname_p1 || "玩家1";
+      const n2 = data.nickname_p2 || "玩家2";
+      const p1 = data.p1 || { score: 0, counts: { white: 0, blue: 0, green: 0, red: 0 }, edges: [] };
+      const p2 = data.p2 || { score: 0, counts: { white: 0, blue: 0, green: 0, red: 0 }, edges: [] };
+      let text = "本局结束";
+      if (data.round_winner === 1) text = "本局 " + n1 + " 胜";
+      else if (data.round_winner === 2) text = "本局 " + n2 + " 胜";
+      else text = "本局 平局";
+      document.getElementById("round-result-text").textContent = text;
+      document.getElementById("row-wins1").textContent = data.wins_p1 ?? 0;
+      document.getElementById("row-wins2").textContent = data.wins_p2 ?? 0;
+      document.getElementById("round-title1").textContent = n1 + " 题板";
+      document.getElementById("round-title2").textContent = n2 + " 题板";
+      // 难度展示（仅在人机对战时有值）
+      const rd = document.getElementById("round-diff");
+      if (data.difficulty) {
+        const label = data.difficulty === "easy" ? "简单" : data.difficulty === "hard" ? "困难" : "普通";
+        rd.textContent = "难度：" + label;
+      } else {
+        rd.textContent = "";
+      }
+      drawResultCanvases("roundCanvas1", "roundCanvas2", p1, p2);
+      const s1 = p1.counts || { white: 0, blue: 0, green: 0, red: 0 };
+      const s2 = p2.counts || { white: 0, blue: 0, green: 0, red: 0 };
+      document.getElementById("round-stats1").textContent =
+        `白点: ${s1.white}，蓝点: ${s1.blue}，绿点: ${s1.green}，红点: ${s1.red}，得分: ${p1.score}`;
+      document.getElementById("round-stats2").textContent =
+        `白点: ${s2.white}，蓝点: ${s2.blue}，绿点: ${s2.green}，红点: ${s2.red}，得分: ${p2.score}`;
+      showScreen("roundover");
+    });
+
+    socket.on("match_over", (data) => {
+      if (timerId) clearInterval(timerId);
+      showScreen("gameover");
+      const n1 = data.nickname_p1 || "玩家1";
+      const n2 = data.nickname_p2 || "玩家2";
+      const p1 = data.p1 || { score: 0, counts: { white: 0, blue: 0, green: 0, red: 0 }, edges: [] };
+      const p2 = data.p2 || { score: 0, counts: { white: 0, blue: 0, green: 0, red: 0 }, edges: [] };
+      const w1 = data.wins_p1 ?? 0;
+      const w2 = data.wins_p2 ?? 0;
+      let text = "游戏结束";
+      if (data.winner === 1) text = n1 + " 以 " + w1 + "-" + w2 + " 获胜！";
+      else if (data.winner === 2) text = n2 + " 以 " + w2 + "-" + w1 + " 获胜！";
+      document.getElementById("winner-text").textContent = text;
+      document.getElementById("final-wins1").textContent = w1;
+      document.getElementById("final-wins2").textContent = w2;
+      document.getElementById("final-title1").textContent = n1 + " 题板";
+      document.getElementById("final-title2").textContent = n2 + " 题板";
+      const fd = document.getElementById("final-diff");
+      if (data.difficulty) {
+        const label = data.difficulty === "easy" ? "简单" : data.difficulty === "hard" ? "困难" : "普通";
+        fd.textContent = "难度：" + label;
+      } else {
+        fd.textContent = "";
+      }
+      drawResultCanvases("finalCanvas1", "finalCanvas2", p1, p2);
+      const s1 = p1.counts || { white: 0, blue: 0, green: 0, red: 0 };
+      const s2 = p2.counts || { white: 0, blue: 0, green: 0, red: 0 };
+      document.getElementById("stats1").textContent =
+        `白点: ${s1.white}，蓝点: ${s1.blue}，绿点: ${s1.green}，红点: ${s1.red}，得分: ${p1.score}`;
+      document.getElementById("stats2").textContent =
+        `白点: ${s2.white}，蓝点: ${s2.blue}，绿点: ${s2.green}，红点: ${s2.red}，得分: ${p2.score}`;
+    });
+
+    document.getElementById("ready-btn").onclick = () => {
+      socket.emit("ready", {});
+    };
+
+    document.getElementById("submit-btn").onclick = () => {
+      socket.emit("submit_polygon", { edges });
+    };
+  </script>
+</body>
+</html>
+
