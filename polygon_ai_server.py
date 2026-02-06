@@ -573,11 +573,10 @@ def start_round():
     state["both_submitted_at"] = None
 
     generate_board()
-
-    # 先让 AI 算出本局的多边形与得分
+    # 本局开始时直接为 AI 计算答案，不再等待预设提交时间
     ai_result = calc_ai_result()
-    state["edges_ai"] = ai_result.get("edges", [])
     state["result_ai"] = ai_result
+    state["edges_ai"] = ai_result.get("edges", [])
 
     # 启动本局定时器
     if state["game_timer"]:
@@ -701,8 +700,8 @@ def on_submit_polygon(data):
         },
     )
 
-    # 若玩家与 AI 均已有结果：3 秒后统一结算本局
-    if state["result_human"] and state["result_ai"]:
+    # 玩家和 AI 均已有结果：3 秒后统一结算本局
+    if state["result_human"] and state["result_ai"] and state["both_submitted_at"] is None:
         state["both_submitted_at"] = time.time()
         emit_to_human("round_finished", {})
         eventlet.spawn_after(3, end_round)
