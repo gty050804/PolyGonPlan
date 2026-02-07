@@ -431,6 +431,16 @@ def calc_ai_result():
         use_edges = best_edges
         submit_time = min(TIME_LIMIT, think_time + random.uniform(3.0, 8.0))
 
+    # 普通难度下保存本局最优解，供展示环节使用
+    if difficulty == "normal":
+        state["best_solution_this_round"] = {
+            "score": best_score,
+            "counts": best_counts,
+            "edges": best_edges,
+        }
+    else:
+        state["best_solution_this_round"] = None
+
     return {
         "finished": True,
         "valid": True,
@@ -529,28 +539,8 @@ def end_round():
     # 是否整场结束
     if wins_h >= MATCH_WIN or wins_ai >= MATCH_WIN:
         match_winner = 1 if wins_h >= MATCH_WIN else 2
-        emit_to_human(
-            "match_over",
-            {
-                "winner": match_winner,
-                "wins_p1": wins_h,
-                "wins_p2": wins_ai,
-                "nickname_p1": state.get("nickname_human", "玩家"),
-                "nickname_p2": state.get("nickname_ai", "AI"),
-                "p1": r_h,
-                "p2": r_ai,
-                "difficulty": state.get("ai_difficulty", "normal"),
-            },
-        )
-        return
-
-    # 否则等待玩家点“准备下一轮”
-    state["ready"] = False
-    emit_to_human(
-        "round_over",
-        {
-            "round_winner": round_winner_numeric,
-            "round_index": round_index,
+        match_payload = {
+            "winner": match_winner,
             "wins_p1": wins_h,
             "wins_p2": wins_ai,
             "nickname_p1": state.get("nickname_human", "玩家"),
@@ -558,8 +548,28 @@ def end_round():
             "p1": r_h,
             "p2": r_ai,
             "difficulty": state.get("ai_difficulty", "normal"),
-        },
-    )
+        }
+        if state.get("best_solution_this_round") is not None:
+            match_payload["best_solution"] = state["best_solution_this_round"]
+        emit_to_human("match_over", match_payload)
+        return
+
+    # 否则等待玩家点“准备下一轮”
+    state["ready"] = False
+    payload = {
+        "round_winner": round_winner_numeric,
+        "round_index": round_index,
+        "wins_p1": wins_h,
+        "wins_p2": wins_ai,
+        "nickname_p1": state.get("nickname_human", "玩家"),
+        "nickname_p2": state.get("nickname_ai", "AI"),
+        "p1": r_h,
+        "p2": r_ai,
+        "difficulty": state.get("ai_difficulty", "normal"),
+    }
+    if state.get("best_solution_this_round") is not None:
+        payload["best_solution"] = state["best_solution_this_round"]
+    emit_to_human("round_over", payload)
 
 
 def start_round():
@@ -568,6 +578,7 @@ def start_round():
     state["edges_ai"] = []
     state["result_human"] = None
     state["result_ai"] = None
+    state["best_solution_this_round"] = None
     state["game_over"] = False
     state["round_start_time"] = time.time()
     state["both_submitted_at"] = None
